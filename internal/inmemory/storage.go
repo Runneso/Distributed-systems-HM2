@@ -1,8 +1,7 @@
-package storage
+package inmemory
 
 import "sync"
 
-// Storage is thread-safe in-memory storage for the node.
 type Storage struct {
 	mu    sync.RWMutex
 	store map[string]string

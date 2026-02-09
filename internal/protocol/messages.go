@@ -44,6 +44,11 @@ var allowedReplicationModes = map[string]struct{}{
 	ReplicationSync:     {},
 }
 
+type ApplicationError interface {
+	error
+	ErrorCode() string
+}
+
 type ClientError struct {
 	Code    string
 	Message string
@@ -132,7 +137,7 @@ func (clusterUpdate *ClusterUpdate) Validate() error {
 	}
 
 	if clusterUpdate.RF < 1 || clusterUpdate.RF > len(clusterUpdate.Nodes) {
-		return NewBadRequestError("replication factor must be between 1 and number of nodes")
+		return NewNotEnoughReplicasError("replication factor must be between 1 and number of nodes")
 	}
 
 	if (clusterUpdate.ReplicationMode == ReplicationSemiSync) && (clusterUpdate.K < 1 || clusterUpdate.K >= clusterUpdate.RF) {
@@ -222,14 +227,14 @@ func NewClientResponse(
 		}
 	}
 
-	var ce ClientError
-	if errors.As(err, &ce) {
+	var ae ApplicationError
+	if errors.As(err, &ae) {
 		return BaseClientResponse{
 			RequestUUID: requestUUID,
 			Node:        node,
 			Status:      StatusError,
-			ErrorCode:   ce.ErrorCode(),
-			ErrorMsg:    ce.Error(),
+			ErrorCode:   ae.ErrorCode(),
+			ErrorMsg:    ae.Error(),
 		}
 	}
 
@@ -259,15 +264,17 @@ func NewClientPutResponse(requestUUID uuid.UUID, node NodeInfo, error error) Cli
 type ClientGetResponse struct {
 	BaseClientResponse
 	Value string `json:"value,omitempty"`
+	Found bool   `json:"found"`
 }
 
-func NewClientGetResponse(requestUUID uuid.UUID, node NodeInfo, value string, error error) ClientGetResponse {
+func NewClientGetResponse(requestUUID uuid.UUID, node NodeInfo, value string, found bool, error error) ClientGetResponse {
 	base := NewClientResponse(requestUUID, node, error)
 	base.Type = TypeClientGetResponse
 
 	return ClientGetResponse{
 		BaseClientResponse: base,
 		Value:              value,
+		Found:              found,
 	}
 }
 
