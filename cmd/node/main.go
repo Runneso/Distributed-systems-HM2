@@ -2,21 +2,28 @@ package main
 
 import (
 	"flag"
+	"log/slog"
+	"os"
 
 	"HM2/internal/node"
 )
 
 func main() {
-	ID := flag.String("id", "A", "Node ID")
+	id := flag.String("id", "A", "Node ID")
 	host := flag.String("host", "127.0.0.1", "Node hostname")
 	port := flag.Int("port", 8081, "Node port")
 
 	flag.Parse()
 
-	peerNode := node.NewNode(*ID, *host, *port)
+	flag.Usage = func() {
+		flag.PrintDefaults()
+	}
+
+	peerNode := node.NewNode(*id, *host, *port)
 	err := peerNode.Start()
 
 	if err != nil {
-		panic(err)
+		slog.Error("failed to start node", "id", *id, "err", err)
+		os.Exit(1)
 	}
 }
