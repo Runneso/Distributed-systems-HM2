@@ -2,6 +2,6 @@ package random
 
 import "math/rand/v2"
 
-func randInt(min, max int) int {
+func RandInt(min, max int) int {
 	return rand.Int()%(max-min+1) + min
 }

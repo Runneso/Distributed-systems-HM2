@@ -18,7 +18,8 @@ const (
 	TypeReplicationPut = "REPL_PUT"
 	TypeReplicationAck = "REPL_ACK"
 
-	TypeClusterUpdate = "CLUSTER_UPDATE"
+	TypeClusterUpdateRequest  = "CLUSTER_UPDATE_REQUEST"
+	TypeClusterUpdateResponse = "CLUSTER_UPDATE_RESPONSE"
 )
 
 const (
@@ -103,7 +104,8 @@ type NodeInfo struct {
 	Port     int    `json:"port"`
 }
 
-type ClusterUpdate struct {
+type ClusterUpdateRequest struct {
+	RequestID       uuid.UUID  `json:"request_id"`
 	Type            string     `json:"type"`
 	Nodes           []NodeInfo `json:"nodes"`
 	LeaderID        string     `json:"leader_id"`
@@ -114,9 +116,10 @@ type ClusterUpdate struct {
 	MaxDelayMs      int        `json:"max_delay_ms"`
 }
 
-func NewClusterUpdate(nodes []NodeInfo, leaderID, replicationMode string, rf, k, minDelayMs, maxDelayMs int) ClusterUpdate {
-	return ClusterUpdate{
-		Type:            TypeClusterUpdate,
+func NewClusterUpdateRequest(requestId uuid.UUID, nodes []NodeInfo, leaderID, replicationMode string, rf, k, minDelayMs, maxDelayMs int) ClusterUpdateRequest {
+	return ClusterUpdateRequest{
+		RequestID:       requestId,
+		Type:            TypeClusterUpdateRequest,
 		Nodes:           nodes,
 		LeaderID:        leaderID,
 		ReplicationMode: replicationMode,
@@ -127,28 +130,69 @@ func NewClusterUpdate(nodes []NodeInfo, leaderID, replicationMode string, rf, k,
 	}
 }
 
-func (clusterUpdate *ClusterUpdate) Validate() error {
-	if _, ok := allowedReplicationModes[clusterUpdate.ReplicationMode]; !ok {
-		return NewBadRequestError("invalid replication mode: " + clusterUpdate.ReplicationMode)
+func (clusterUpdateRequest *ClusterUpdateRequest) Validate() error {
+	if _, ok := allowedReplicationModes[clusterUpdateRequest.ReplicationMode]; !ok {
+		return NewBadRequestError("invalid replication mode: " + clusterUpdateRequest.ReplicationMode)
 	}
 
-	if len(clusterUpdate.Nodes) == 0 {
+	if len(clusterUpdateRequest.Nodes) == 0 {
 		return NewBadRequestError("nodes list is empty")
 	}
 
-	if clusterUpdate.RF < 1 || clusterUpdate.RF > len(clusterUpdate.Nodes) {
+	if clusterUpdateRequest.RF < 1 || clusterUpdateRequest.RF > len(clusterUpdateRequest.Nodes) {
 		return NewNotEnoughReplicasError("replication factor must be between 1 and number of nodes")
 	}
 
-	if (clusterUpdate.ReplicationMode == ReplicationSemiSync) && (clusterUpdate.K < 1 || clusterUpdate.K >= clusterUpdate.RF) {
+	if (clusterUpdateRequest.ReplicationMode == ReplicationSemiSync) && (clusterUpdateRequest.K < 1 || clusterUpdateRequest.K >= clusterUpdateRequest.RF) {
 		return NewBadRequestError("semi-sync acks must be between 1 and replication factor - 1")
 	}
 
-	if clusterUpdate.MinDelayMs < 0 || clusterUpdate.MaxDelayMs < 0 || clusterUpdate.MinDelayMs > clusterUpdate.MaxDelayMs {
+	if clusterUpdateRequest.MinDelayMs < 0 || clusterUpdateRequest.MaxDelayMs < 0 || clusterUpdateRequest.MinDelayMs > clusterUpdateRequest.MaxDelayMs {
 		return NewBadRequestError("invalid delay range")
 	}
 
 	return nil
+}
+
+type ClusterUpdateResponse struct {
+	RequestID uuid.UUID `json:"request_id"`
+	Type      string    `json:"type"`
+	Node      NodeInfo  `json:"node"`
+	Status    string    `json:"status"`
+	ErrorCode string    `json:"error_code,omitempty"`
+	ErrorMsg  string    `json:"error_msg,omitempty"`
+}
+
+func NewClusterUpdateResponse(requestID uuid.UUID, node NodeInfo, error error) ClusterUpdateResponse {
+	if error == nil {
+		return ClusterUpdateResponse{
+			RequestID: requestID,
+			Type:      TypeClusterUpdateResponse,
+			Node:      node,
+			Status:    StatusOK,
+		}
+	}
+
+	var ae ApplicationError
+	if errors.As(error, &ae) {
+		return ClusterUpdateResponse{
+			RequestID: requestID,
+			Type:      TypeClusterUpdateResponse,
+			Node:      node,
+			Status:    StatusError,
+			ErrorMsg:  ae.Error(),
+			ErrorCode: ae.ErrorCode(),
+		}
+	}
+
+	return ClusterUpdateResponse{
+		RequestID: requestID,
+		Type:      TypeClusterUpdateResponse,
+		Node:      node,
+		Status:    StatusError,
+		ErrorMsg:  error.Error(),
+		ErrorCode: ErrorBadRequest,
+	}
 }
 
 type BaseClientRequest struct {

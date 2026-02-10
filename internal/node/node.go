@@ -12,18 +12,8 @@ import (
 
 	"log/slog"
 	"net"
-	"sync"
 
 	"github.com/google/uuid"
-)
-
-const (
-	DefaultLeaderID          = "A"
-	DefaultReplicationMode   = protocol.ReplicationSync
-	DefaultReplicationFactor = 1
-	DefaultAckNeed           = 1
-	DefaultMinDelayMs        = 0
-	DefaultMaxDelayMs        = 0
 )
 
 type Node struct {
@@ -34,42 +24,32 @@ type Node struct {
 	storage *inmemory.Storage
 	dedup   *inmemory.Deduplication
 
-	mu sync.RWMutex
-
-	nodes       map[string]protocol.NodeInfo
-	connections map[string]net.Conn
-	handlers    map[string]func([]byte, *bufio.Writer) (error, uuid.UUID)
-
-	leaderID        string
-	replicationMode string
-	rf              int
-	k               int
-	delayMinMs      int
-	delayMaxMs      int
+	peerManager   *PeerManager
+	handlers      map[string]func([]byte, *bufio.Writer) (error, uuid.UUID)
+	errorHandlers map[string]func(uuid.UUID, *bufio.Writer, error)
 }
 
 func NewNode(id, hostname string, port int) *Node {
 	node := &Node{
-		id:              id,
-		hostname:        hostname,
-		port:            port,
-		storage:         inmemory.NewStorage(),
-		dedup:           inmemory.NewDeduplication(),
-		nodes:           make(map[string]protocol.NodeInfo),
-		connections:     make(map[string]net.Conn),
-		leaderID:        DefaultLeaderID,
-		replicationMode: DefaultReplicationMode,
-		rf:              DefaultReplicationFactor,
-		k:               DefaultAckNeed,
-		delayMinMs:      DefaultMinDelayMs,
-		delayMaxMs:      DefaultMaxDelayMs,
+		id:          id,
+		hostname:    hostname,
+		port:        port,
+		storage:     inmemory.NewStorage(),
+		dedup:       inmemory.NewDeduplication(),
+		peerManager: NewPeerManager(protocol.NodeInfo{ID: id, Hostname: hostname, Port: port}),
 	}
 	node.handlers = map[string]func([]byte, *bufio.Writer) (error, uuid.UUID){
-		protocol.TypeClientGetRequest:  node.handlerClientGetRequest,
-		protocol.TypeClientPutRequest:  node.handlerClientPutRequest,
-		protocol.TypeClientDumpRequest: node.handlerClientDumpRequest,
-		protocol.TypeReplicationPut:    node.handlerReplicationPut,
-		protocol.TypeClusterUpdate:     node.handlerClusterUpdate,
+		protocol.TypeClientGetRequest:     node.handlerClientGetRequest,
+		protocol.TypeClientPutRequest:     node.handlerClientPutRequest,
+		protocol.TypeClientDumpRequest:    node.handlerClientDumpRequest,
+		protocol.TypeReplicationPut:       node.handlerReplicationPut,
+		protocol.TypeClusterUpdateRequest: node.handlerClusterUpdateRequest,
+	}
+	node.errorHandlers = map[string]func(uuid.UUID, *bufio.Writer, error){
+		protocol.TypeClientGetRequest:     node.handlerClientError,
+		protocol.TypeClientPutRequest:     node.handlerClientError,
+		protocol.TypeClientDumpRequest:    node.handlerClientError,
+		protocol.TypeClusterUpdateRequest: node.handlerClusterUpdateError,
 	}
 	return node
 
@@ -94,13 +74,6 @@ func (node *Node) Start() error {
 		}
 		go node.handleConn(connection)
 	}
-}
-
-func (node *Node) IsLeader() bool {
-	node.mu.RLock()
-	defer node.mu.RUnlock()
-
-	return node.id == node.leaderID
 }
 
 func (node *Node) SelfInfo() protocol.NodeInfo {
@@ -140,15 +113,15 @@ func (node *Node) handleConn(conn net.Conn) {
 
 		if handler, ok := node.handlers[env.Type]; ok {
 			if err, id := handler(line, writer); err != nil {
-				var ae protocol.ApplicationError
-				if errors.As(err, &ae) && node.isClientRequest(env.Type) {
-					response := protocol.NewClientResponse(id, node.SelfInfo(), err)
-					_ = node.writeJSONLine(writer, response)
+				if errorHandler, ok := node.errorHandlers[env.Type]; ok {
+					errorHandler(id, writer, err)
+				} else {
+					slog.Warn("unknown handle error type", "type", env.Type)
 				}
 				slog.Warn("handle request failed", "type", env.Type, "error", err)
 			}
 		} else {
-			slog.Warn("unknown type", "type", env.Type)
+			slog.Warn("unknown handle type", "type", env.Type)
 		}
 	}
 }
@@ -165,44 +138,6 @@ func (node *Node) writeJSONLine(writer *bufio.Writer, v any) error {
 		return err
 	}
 	return writer.Flush()
-}
-
-func (node *Node) isClientRequest(requestType string) bool {
-	return requestType == protocol.TypeClientGetRequest ||
-		requestType == protocol.TypeClientPutRequest ||
-		requestType == protocol.TypeClientDumpRequest
-}
-
-func (node *Node) applyClusterUpdate(clusterUpdate protocol.ClusterUpdate) error {
-	//node.mu.Lock()
-	//defer node.mu.Unlock()
-	//
-	//if node.IsLeader() {
-	//	for _, connection := range node.connections {
-	//		err := connection.Close()
-	//
-	//		if err != nil {
-	//			slog.Error("Failed to close connection", "error", err)
-	//		}
-	//	}
-	//}
-	//
-	//node.connections = make(map[string]net.Conn)
-	//node.nodes = make(map[string]protocol.NodeInfo)
-	//for _, nodeInfo := range clusterUpdate.Nodes {
-	//	node.nodes[nodeInfo.ID] = nodeInfo
-	//}
-	//node.leaderID = clusterUpdate.LeaderID
-	//node.replicationMode = clusterUpdate.ReplicationMode
-	//node.rf = clusterUpdate.RF
-	//node.k = clusterUpdate.K
-	//node.delayMinMs = clusterUpdate.MinDelayMs
-	//node.delayMaxMs = clusterUpdate.MaxDelayMs
-	//
-	//if node.IsLeader() {
-	//
-	//}
-
 }
 
 func (node *Node) handlerClientGetRequest(data []byte, writer *bufio.Writer) (error, uuid.UUID) {
@@ -233,19 +168,24 @@ func (node *Node) handlerClientPutRequest(data []byte, writer *bufio.Writer) (er
 		return fmt.Errorf("unmarshal client put request: %w", protocol.NewBadRequestError("bad json")), uuid.Nil
 	}
 
-	if !node.IsLeader() {
-		return fmt.Errorf("not leader: %w", protocol.NewNotLeaderError(node.leaderID)), request.RequestUUID
+	if !node.peerManager.IsLeader() {
+		leaderID := node.peerManager.GetLeaderID()
+		return fmt.Errorf("not leader: %w", protocol.NewNotLeaderError(leaderID)), request.RequestUUID
 	}
 
 	node.storage.Put(request.Key, request.Value)
-	// TODO replicate to followers
+	err := node.peerManager.Release(&request)
+
+	if err != nil {
+		return fmt.Errorf("release request: %w", err), request.RequestUUID
+	}
 
 	response := protocol.NewClientPutResponse(
 		request.RequestUUID,
 		node.SelfInfo(),
 		nil)
 
-	err := node.writeJSONLine(writer, response)
+	err = node.writeJSONLine(writer, response)
 
 	if err != nil {
 		return fmt.Errorf("write response: %w", err), request.RequestUUID
@@ -301,15 +241,39 @@ func (node *Node) handlerReplicationPut(data []byte, writer *bufio.Writer) (erro
 	return nil, request.OperationID
 }
 
-func (node *Node) handlerClusterUpdate(data []byte, writer *bufio.Writer) (error, uuid.UUID) {
-	var request protocol.ClusterUpdate
+func (node *Node) handlerClusterUpdateRequest(data []byte, writer *bufio.Writer) (error, uuid.UUID) {
+	var request protocol.ClusterUpdateRequest
 	if err := json.Unmarshal(data, &request); err != nil {
 		return fmt.Errorf("unmarshal cluster update request: %w", protocol.NewBadRequestError("bad json")), uuid.Nil
 	}
 
 	if err := request.Validate(); err != nil {
-		return fmt.Errorf("invalid cluster update request: %w", protocol.NewBadRequestError("invalid cluster update request")), uuid.Nil
+		return fmt.Errorf("invalid cluster update request: %w", err), request.RequestID
 	}
 
-	node.applyClusterUpdate(request)
+	node.peerManager.ApplyClusterUpdate(&request)
+
+	response := protocol.NewClusterUpdateResponse(
+		request.RequestID,
+		node.SelfInfo(),
+		nil,
+	)
+
+	err := node.writeJSONLine(writer, response)
+
+	if err != nil {
+		return fmt.Errorf("write response: %w", err), request.RequestID
+	}
+
+	return nil, request.RequestID
+}
+
+func (node *Node) handlerClientError(requestId uuid.UUID, writer *bufio.Writer, error error) {
+	response := protocol.NewClientResponse(requestId, node.SelfInfo(), error)
+	_ = node.writeJSONLine(writer, response)
+}
+
+func (node *Node) handlerClusterUpdateError(requestId uuid.UUID, writer *bufio.Writer, error error) {
+	response := protocol.NewClusterUpdateResponse(requestId, node.SelfInfo(), error)
+	_ = node.writeJSONLine(writer, response)
 }
