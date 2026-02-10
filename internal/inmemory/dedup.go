@@ -1,6 +1,7 @@
 package inmemory
 
 import (
+	"log/slog"
 	"sync"
 	"time"
 
@@ -47,6 +48,7 @@ func (dedup *Deduplication) StartVacuum() {
 	go func() {
 		defer ticker.Stop()
 		for range ticker.C {
+			slog.Info("Vacuum started")
 			now := time.Now()
 
 			var toDelete []uuid.UUID

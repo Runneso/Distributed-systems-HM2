@@ -70,7 +70,7 @@ func (node *Node) Start() error {
 	for {
 		connection, err := listener.Accept()
 		if err != nil {
-			return fmt.Errorf("accept: %w", err)
+			slog.Error("failed to accept connection", "id", node.id, "err", err)
 		}
 		go node.handleConn(connection)
 	}
@@ -97,7 +97,7 @@ func (node *Node) handleConn(conn net.Conn) {
 			if errors.Is(err, io.EOF) {
 				return
 			}
-			slog.Warn("read failed", "remote", conn.RemoteAddr().String(), "error", err)
+			slog.Error("read failed", "remote", conn.RemoteAddr().String(), "error", err)
 			return
 		}
 
@@ -115,6 +115,7 @@ func (node *Node) handleConn(conn net.Conn) {
 			if id, err := handler(line, writer); err != nil {
 				if errorHandler, ok := node.errorHandlers[env.Type]; ok {
 					errorHandler(id, writer, err)
+					slog.Info("node handle error", "type", env.Type, "error", err)
 				} else {
 					slog.Warn("unknown handle error type", "type", env.Type)
 				}
@@ -146,6 +147,8 @@ func (node *Node) handlerClientGetRequest(data []byte, writer *bufio.Writer) (uu
 		return uuid.Nil, fmt.Errorf("unmarshal client get request: %w", protocol.NewBadRequestError("bad json"))
 	}
 
+	slog.Info("node handle request", "type", request.Type, "request_id", request.RequestUUID.String())
+
 	value, exists := node.storage.Get(request.Key)
 
 	response := protocol.NewClientGetResponse(
@@ -167,6 +170,8 @@ func (node *Node) handlerClientPutRequest(data []byte, writer *bufio.Writer) (uu
 	if err := json.Unmarshal(data, &request); err != nil {
 		return uuid.Nil, fmt.Errorf("unmarshal client put request: %w", protocol.NewBadRequestError("bad json"))
 	}
+
+	slog.Info("node handle request", "type", request.Type, "request_id", request.RequestUUID.String())
 
 	if !node.peerManager.IsLeader() {
 		leaderID := node.peerManager.GetLeaderID()
@@ -199,6 +204,8 @@ func (node *Node) handlerClientDumpRequest(data []byte, writer *bufio.Writer) (u
 		return uuid.Nil, fmt.Errorf("unmarshal client dump request: %w", protocol.NewBadRequestError("bad json"))
 	}
 
+	slog.Info("node handle request", "type", request.Type, "request_id", request.RequestUUID.String())
+
 	dump := node.storage.Dump()
 
 	response := protocol.NewClientDumpResponse(
@@ -221,6 +228,8 @@ func (node *Node) handlerReplicationPut(data []byte, writer *bufio.Writer) (uuid
 	if err := json.Unmarshal(data, &request); err != nil {
 		return uuid.Nil, fmt.Errorf("unmarshal replication put request: %w", protocol.NewBadRequestError("bad json"))
 	}
+
+	slog.Info("node handle request", "type", request.Type, "request_id", request.OperationID.String())
 
 	if !node.dedup.Exist(request.OperationID) {
 		node.dedup.Add(request.OperationID)
@@ -246,6 +255,8 @@ func (node *Node) handlerClusterUpdateRequest(data []byte, writer *bufio.Writer)
 	if err := json.Unmarshal(data, &request); err != nil {
 		return uuid.Nil, fmt.Errorf("unmarshal cluster update request: %w", protocol.NewBadRequestError("bad json"))
 	}
+
+	slog.Info("node handle request", "type", request.Type, "request_id", request.RequestID.String())
 
 	if err := request.Validate(); err != nil {
 		return request.RequestID, fmt.Errorf("invalid cluster update request: %w", err)
