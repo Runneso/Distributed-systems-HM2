@@ -1,17 +1,17 @@
 package node
 
 import (
-	"HM2/internal/inmemory"
-	"HM2/internal/protocol"
 	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"strconv"
-
 	"log/slog"
 	"net"
+	"strconv"
+
+	"HM2/internal/inmemory"
+	"HM2/internal/protocol"
 
 	"github.com/google/uuid"
 )
@@ -25,7 +25,7 @@ type Node struct {
 	dedup   *inmemory.Deduplication
 
 	peerManager   *PeerManager
-	handlers      map[string]func([]byte, *bufio.Writer) (error, uuid.UUID)
+	handlers      map[string]func([]byte, *bufio.Writer) (uuid.UUID, error)
 	errorHandlers map[string]func(uuid.UUID, *bufio.Writer, error)
 }
 
@@ -38,7 +38,7 @@ func NewNode(id, hostname string, port int) *Node {
 		dedup:       inmemory.NewDeduplication(),
 		peerManager: NewPeerManager(protocol.NodeInfo{ID: id, Hostname: hostname, Port: port}),
 	}
-	node.handlers = map[string]func([]byte, *bufio.Writer) (error, uuid.UUID){
+	node.handlers = map[string]func([]byte, *bufio.Writer) (uuid.UUID, error){
 		protocol.TypeClientGetRequest:     node.handlerClientGetRequest,
 		protocol.TypeClientPutRequest:     node.handlerClientPutRequest,
 		protocol.TypeClientDumpRequest:    node.handlerClientDumpRequest,
@@ -112,7 +112,7 @@ func (node *Node) handleConn(conn net.Conn) {
 		}
 
 		if handler, ok := node.handlers[env.Type]; ok {
-			if err, id := handler(line, writer); err != nil {
+			if id, err := handler(line, writer); err != nil {
 				if errorHandler, ok := node.errorHandlers[env.Type]; ok {
 					errorHandler(id, writer, err)
 				} else {
@@ -140,10 +140,10 @@ func (node *Node) writeJSONLine(writer *bufio.Writer, v any) error {
 	return writer.Flush()
 }
 
-func (node *Node) handlerClientGetRequest(data []byte, writer *bufio.Writer) (error, uuid.UUID) {
+func (node *Node) handlerClientGetRequest(data []byte, writer *bufio.Writer) (uuid.UUID, error) {
 	var request protocol.ClientGetRequest
 	if err := json.Unmarshal(data, &request); err != nil {
-		return fmt.Errorf("unmarshal client get request: %w", protocol.NewBadRequestError("bad json")), uuid.Nil
+		return uuid.Nil, fmt.Errorf("unmarshal client get request: %w", protocol.NewBadRequestError("bad json"))
 	}
 
 	value, exists := node.storage.Get(request.Key)
@@ -157,27 +157,27 @@ func (node *Node) handlerClientGetRequest(data []byte, writer *bufio.Writer) (er
 
 	err := node.writeJSONLine(writer, response)
 	if err != nil {
-		return fmt.Errorf("write response: %w", err), request.RequestUUID
+		return request.RequestUUID, fmt.Errorf("write response: %w", err)
 	}
-	return nil, request.RequestUUID
+	return request.RequestUUID, nil
 }
 
-func (node *Node) handlerClientPutRequest(data []byte, writer *bufio.Writer) (error, uuid.UUID) {
+func (node *Node) handlerClientPutRequest(data []byte, writer *bufio.Writer) (uuid.UUID, error) {
 	var request protocol.ClientPutRequest
 	if err := json.Unmarshal(data, &request); err != nil {
-		return fmt.Errorf("unmarshal client put request: %w", protocol.NewBadRequestError("bad json")), uuid.Nil
+		return uuid.Nil, fmt.Errorf("unmarshal client put request: %w", protocol.NewBadRequestError("bad json"))
 	}
 
 	if !node.peerManager.IsLeader() {
 		leaderID := node.peerManager.GetLeaderID()
-		return fmt.Errorf("not leader: %w", protocol.NewNotLeaderError(leaderID)), request.RequestUUID
+		return request.RequestUUID, fmt.Errorf("not leader: %w", protocol.NewNotLeaderError(leaderID))
 	}
 
 	node.storage.Put(request.Key, request.Value)
 	err := node.peerManager.Release(&request)
 
 	if err != nil {
-		return fmt.Errorf("release request: %w", err), request.RequestUUID
+		return request.RequestUUID, fmt.Errorf("release request: %w", err)
 	}
 
 	response := protocol.NewClientPutResponse(
@@ -188,15 +188,15 @@ func (node *Node) handlerClientPutRequest(data []byte, writer *bufio.Writer) (er
 	err = node.writeJSONLine(writer, response)
 
 	if err != nil {
-		return fmt.Errorf("write response: %w", err), request.RequestUUID
+		return request.RequestUUID, fmt.Errorf("write response: %w", err)
 	}
-	return nil, request.RequestUUID
+	return request.RequestUUID, nil
 }
 
-func (node *Node) handlerClientDumpRequest(data []byte, writer *bufio.Writer) (error, uuid.UUID) {
+func (node *Node) handlerClientDumpRequest(data []byte, writer *bufio.Writer) (uuid.UUID, error) {
 	var request protocol.ClientDumpRequest
 	if err := json.Unmarshal(data, &request); err != nil {
-		return fmt.Errorf("unmarshal client dump request: %w", protocol.NewBadRequestError("bad json")), uuid.Nil
+		return uuid.Nil, fmt.Errorf("unmarshal client dump request: %w", protocol.NewBadRequestError("bad json"))
 	}
 
 	dump := node.storage.Dump()
@@ -210,16 +210,16 @@ func (node *Node) handlerClientDumpRequest(data []byte, writer *bufio.Writer) (e
 	err := node.writeJSONLine(writer, response)
 
 	if err != nil {
-		return fmt.Errorf("write response: %w", err), request.RequestUUID
+		return request.RequestUUID, fmt.Errorf("write response: %w", err)
 	}
 
-	return nil, request.RequestUUID
+	return request.RequestUUID, nil
 }
 
-func (node *Node) handlerReplicationPut(data []byte, writer *bufio.Writer) (error, uuid.UUID) {
+func (node *Node) handlerReplicationPut(data []byte, writer *bufio.Writer) (uuid.UUID, error) {
 	var request protocol.ReplicationPut
 	if err := json.Unmarshal(data, &request); err != nil {
-		return fmt.Errorf("unmarshal replication put request: %w", protocol.NewBadRequestError("bad json")), uuid.Nil
+		return uuid.Nil, fmt.Errorf("unmarshal replication put request: %w", protocol.NewBadRequestError("bad json"))
 	}
 
 	if !node.dedup.Exist(request.OperationID) {
@@ -235,20 +235,20 @@ func (node *Node) handlerReplicationPut(data []byte, writer *bufio.Writer) (erro
 	err := node.writeJSONLine(writer, response)
 
 	if err != nil {
-		return fmt.Errorf("write response: %w", err), request.OperationID
+		return request.OperationID, fmt.Errorf("write response: %w", err)
 	}
 
-	return nil, request.OperationID
+	return request.OperationID, nil
 }
 
-func (node *Node) handlerClusterUpdateRequest(data []byte, writer *bufio.Writer) (error, uuid.UUID) {
+func (node *Node) handlerClusterUpdateRequest(data []byte, writer *bufio.Writer) (uuid.UUID, error) {
 	var request protocol.ClusterUpdateRequest
 	if err := json.Unmarshal(data, &request); err != nil {
-		return fmt.Errorf("unmarshal cluster update request: %w", protocol.NewBadRequestError("bad json")), uuid.Nil
+		return uuid.Nil, fmt.Errorf("unmarshal cluster update request: %w", protocol.NewBadRequestError("bad json"))
 	}
 
 	if err := request.Validate(); err != nil {
-		return fmt.Errorf("invalid cluster update request: %w", err), request.RequestID
+		return request.RequestID, fmt.Errorf("invalid cluster update request: %w", err)
 	}
 
 	node.peerManager.ApplyClusterUpdate(&request)
@@ -262,18 +262,18 @@ func (node *Node) handlerClusterUpdateRequest(data []byte, writer *bufio.Writer)
 	err := node.writeJSONLine(writer, response)
 
 	if err != nil {
-		return fmt.Errorf("write response: %w", err), request.RequestID
+		return request.RequestID, fmt.Errorf("write response: %w", err)
 	}
 
-	return nil, request.RequestID
+	return request.RequestID, nil
 }
 
-func (node *Node) handlerClientError(requestId uuid.UUID, writer *bufio.Writer, error error) {
-	response := protocol.NewClientResponse(requestId, node.SelfInfo(), error)
+func (node *Node) handlerClientError(requestID uuid.UUID, writer *bufio.Writer, error error) {
+	response := protocol.NewClientResponse(requestID, node.SelfInfo(), error)
 	_ = node.writeJSONLine(writer, response)
 }
 
-func (node *Node) handlerClusterUpdateError(requestId uuid.UUID, writer *bufio.Writer, error error) {
-	response := protocol.NewClusterUpdateResponse(requestId, node.SelfInfo(), error)
+func (node *Node) handlerClusterUpdateError(requestID uuid.UUID, writer *bufio.Writer, error error) {
+	response := protocol.NewClusterUpdateResponse(requestID, node.SelfInfo(), error)
 	_ = node.writeJSONLine(writer, response)
 }

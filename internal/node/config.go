@@ -12,9 +12,9 @@ type ClusterConfig struct {
 	tryingForever   bool
 }
 
-func NewClusterConfig(leaderId, replicationMode string, rf, k, delayMinMs, delayMaxMs int, tryingForever bool) *ClusterConfig {
+func NewClusterConfig(leaderID, replicationMode string, rf, k, delayMinMs, delayMaxMs int, tryingForever bool) *ClusterConfig {
 	return &ClusterConfig{
-		leaderID:        leaderId,
+		leaderID:        leaderID,
 		replicationMode: replicationMode,
 		rf:              rf,
 		k:               k,

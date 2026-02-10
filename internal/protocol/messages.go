@@ -116,9 +116,9 @@ type ClusterUpdateRequest struct {
 	MaxDelayMs      int        `json:"max_delay_ms"`
 }
 
-func NewClusterUpdateRequest(requestId uuid.UUID, nodes []NodeInfo, leaderID, replicationMode string, rf, k, minDelayMs, maxDelayMs int) ClusterUpdateRequest {
+func NewClusterUpdateRequest(requestID uuid.UUID, nodes []NodeInfo, leaderID, replicationMode string, rf, k, minDelayMs, maxDelayMs int) ClusterUpdateRequest {
 	return ClusterUpdateRequest{
-		RequestID:       requestId,
+		RequestID:       requestID,
 		Type:            TypeClusterUpdateRequest,
 		Nodes:           nodes,
 		LeaderID:        leaderID,

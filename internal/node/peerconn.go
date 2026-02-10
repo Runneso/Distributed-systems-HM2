@@ -1,13 +1,14 @@
 package node
 
 import (
-	"HM2/internal/protocol"
 	"bufio"
 	"encoding/json"
 	"io"
 	"net"
 	"sync"
 	"time"
+
+	"HM2/internal/protocol"
 )
 
 const (

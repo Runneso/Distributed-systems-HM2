@@ -3,8 +3,9 @@ package inmemory
 import (
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
-import "github.com/google/uuid"
 
 type Deduplication struct {
 	mu           sync.RWMutex

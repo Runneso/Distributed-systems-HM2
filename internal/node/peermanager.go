@@ -1,13 +1,14 @@
 package node
 
 import (
-	"HM2/internal/protocol"
-	"HM2/pkg/random"
 	"context"
 	"net"
 	"strconv"
 	"sync"
 	"time"
+
+	"HM2/internal/protocol"
+	"HM2/pkg/random"
 
 	"github.com/google/uuid"
 )
@@ -98,7 +99,7 @@ func (peerManager *PeerManager) ApplyClusterUpdate(request *protocol.ClusterUpda
 			peerManager.startReconnectLoop(connection)
 			peerManager.peers[id] = connection
 			go func(p *PeerConn) {
-				p.Connect()
+				_ = p.Connect()
 			}(connection)
 		}
 	}
@@ -175,7 +176,7 @@ func (peerManager *PeerManager) retrying(
 	ticker := time.NewTicker(time.Millisecond * 200)
 	defer ticker.Stop()
 	peerManager.noiseSleep(delayMinMs, delayMaxMs)
-	connection.Send(request)
+	_ = connection.Send(request)
 
 	for {
 		select {
@@ -183,7 +184,7 @@ func (peerManager *PeerManager) retrying(
 			return
 		case <-ticker.C:
 			peerManager.noiseSleep(delayMinMs, delayMaxMs)
-			connection.Send(request)
+			_ = connection.Send(request)
 		}
 	}
 }
