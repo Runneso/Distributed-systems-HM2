@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net"
 	"sync"
 	"time"
@@ -158,6 +159,7 @@ func (connection *PeerConn) readerLoop() {
 		if env.Type == protocol.TypeReplicationAck {
 			var ack protocol.ReplicationAck
 			if json.Unmarshal(line, &ack) == nil && connection.onAck != nil {
+				slog.Info("node handle request", "type", env.Type, "operation_id", ack.OperationID)
 				connection.onAck(&ack)
 			}
 		}

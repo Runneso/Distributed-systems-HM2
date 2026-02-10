@@ -20,7 +20,7 @@ const (
 	DefaultAckNeed           = 1
 	DefaultMinDelayMs        = 0
 	DefaultMaxDelayMs        = 0
-	DefaultTryingForever     = true
+	DefaultTryingForever     = false
 )
 
 type ClusterRelease struct {
@@ -173,7 +173,7 @@ func (peerManager *PeerManager) retrying(
 	request protocol.ReplicationPut,
 	delayMinMs, delayMaxMs int,
 ) {
-	ticker := time.NewTicker(time.Millisecond * 200)
+	ticker := time.NewTicker(time.Millisecond * time.Duration(1000+delayMaxMs)) // avoid random choose in select
 	defer ticker.Stop()
 	peerManager.noiseSleep(delayMinMs, delayMaxMs)
 	_ = connection.Send(request)
