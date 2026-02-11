@@ -37,7 +37,9 @@ go build
 <div style="text-align: center;">
   <img src="img.png" width="500">
 </div>
+
 ---
+
 ## Спецификация протокола
 
 Взаимодействие осуществляется поверх TCP.  
