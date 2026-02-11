@@ -150,7 +150,7 @@ def generate_row(
         'replicationMode': replication_mode,
         'rf': replication_factor,
         'k': semi_sync_acks if replication_mode == 'semi-sync' else -1,
-        'threads': 16,
+        'threads': os.cpu_count(),
         'putRatio': put_ratio,
         'totalOps': total_ops,
         'throughputOpsSec': round(throughput_ops_sec, 3),
