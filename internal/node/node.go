@@ -178,12 +178,13 @@ func (node *Node) handlerClientPutRequest(data []byte, writer *bufio.Writer) (uu
 		return request.RequestUUID, fmt.Errorf("not leader: %w", protocol.NewNotLeaderError(leaderID))
 	}
 
-	node.storage.Put(request.Key, request.Value)
 	err := node.peerManager.Release(&request)
 
 	if err != nil {
 		return request.RequestUUID, fmt.Errorf("release request: %w", err)
 	}
+
+	node.storage.Put(request.Key, request.Value)
 
 	response := protocol.NewClientPutResponse(
 		request.RequestUUID,

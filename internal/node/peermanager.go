@@ -111,6 +111,12 @@ func (peerManager *PeerManager) Release(request *protocol.ClientPutRequest) erro
 
 	operationID := request.RequestUUID
 
+	if peerManager.countAlivePeers() < peerManager.config.rf-1 {
+		cancel()
+		peerManager.mu.Unlock()
+		return protocol.NewNotEnoughReplicasError("not enough alive replicas to perform the operation")
+	}
+
 	release := &ClusterRelease{
 		needAcks:  peerManager.clcNeedAcks(),
 		totalAcks: peerManager.config.rf - 1,
@@ -118,6 +124,7 @@ func (peerManager *PeerManager) Release(request *protocol.ClientPutRequest) erro
 		syncDone:  make(chan struct{}),
 		cancel:    cancel,
 	}
+
 	peerManager.releases[operationID] = release
 
 	replicationRequest := protocol.NewReplicationPut(
@@ -238,4 +245,17 @@ func (peerManager *PeerManager) startReconnectLoop(connection *PeerConn) {
 			_ = connection.Connect()
 		}
 	}()
+}
+
+func (peerManager *PeerManager) countAlivePeers() int {
+	count := 0
+	for _, connection := range peerManager.peers {
+		connection.mu.Lock()
+		alive := connection.conn != nil
+		connection.mu.Unlock()
+		if alive {
+			count++
+		}
+	}
+	return count
 }
